@@ -1,0 +1,20 @@
+[package]
+name = "tracing-layer-axiom"
+version = "0.1.0"
+edition = "2021"
+description= "the layer of sending tracing events to axiom"
+license = "MIT or Apache-2.0"
+author = ["Kilerd Chan <blove694@gmail.com>"]
+readme = "README.md"
+repository = "https://github.com/kilerd/tracing-layer-axiom"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+axiom-rs = "0.10"
+serde = "1"
+serde_json = "1"
+tokio = "1"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+typed-builder = "0.18"
