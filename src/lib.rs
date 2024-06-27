@@ -3,7 +3,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use axiom_rs::Client;
-use serde_json::{Value};
+use serde_json::Value;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tracing::field::Field;
 use tracing::Subscriber;
@@ -73,8 +73,7 @@ pub(crate) async fn axiom_backend_worker(
             }
         }
     }
-}
-
+}
 #[derive(Debug)]
 pub struct AxiomLoggingLayer {
     client: Arc<Client>,
