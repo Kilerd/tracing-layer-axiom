@@ -79,7 +79,10 @@ pub struct AxiomLoggingLayer {
     tx: UnboundedSender<LogEvent>,
 }
 
-impl<S: Subscriber> Layer<S> for AxiomLoggingLayer {
+impl<S> Layer<S> for AxiomLoggingLayer
+where
+    S: Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+{
     fn on_event(
         &self,
         event: &tracing::Event<'_>,
