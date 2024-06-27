@@ -38,8 +38,6 @@ impl ConfigBuilder {
             self.dataset.clone(),
         ));
         AxiomLoggingLayer {
-            client: client,
-            dataset: self.dataset,
             application: self.application,
             environment: self.environment,
             tx,
@@ -76,8 +74,6 @@ pub(crate) async fn axiom_backend_worker(
 }
 #[derive(Debug)]
 pub struct AxiomLoggingLayer {
-    client: Arc<Client>,
-    dataset: String,
     application: String,
     environment: String,
     tx: UnboundedSender<LogEvent>,
@@ -104,8 +100,6 @@ impl<S: Subscriber> Layer<S> for AxiomLoggingLayer {
             fields: serde_json::to_value(visitor.fields)
                 .expect("cannot serde a hashmap, it's a bug"),
         };
-
-        dbg!(&log_event);
 
         if let Err(e) = self.tx.send(log_event) {
             tracing::error!(err=%e, "fail to send log event to given channel");
@@ -167,12 +161,17 @@ impl<'a> tracing::field::Visit for JsonVisitor<'a> {
 
 impl<'a> JsonVisitor<'a> {
     fn record_value(&mut self, name: &'a str, value: Value) {
-        let name = if name.starts_with("r#") {
-            &name[2..]
-        } else {
-            name
-        };
-        self.fields.insert(name, value);
+        match name {
+            "message" => {
+                self.message = value.as_str().map(|it| it.to_owned());
+            }
+            n if n.starts_with("r#") => {
+                self.fields.insert(&n[2..], value);
+            }
+            n => {
+                self.fields.insert(n, value);
+            }
+        }
     }
 }
 
