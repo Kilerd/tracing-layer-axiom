@@ -1,8 +1,9 @@
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
 use axiom_rs::Client;
-use serde_json::{json, Value};
+use serde_json::{Value};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tracing::field::Field;
 use tracing::Subscriber;
@@ -72,7 +73,7 @@ pub(crate) async fn axiom_backend_worker(
             }
         }
     }
-}
+}
 
 #[derive(Debug)]
 pub struct AxiomLoggingLayer {
@@ -91,12 +92,13 @@ impl<S: Subscriber> Layer<S> for AxiomLoggingLayer {
     ) {
         let mut log_fields = LogFields {
             message: None,
-            fields: json!({}),
+            fields: HashMap::default(),
         };
 
-        let mut visitor = JsonVisitor(&mut log_fields);
+        let mut visitor = JsonVisitor(log_fields);
         event.record(&mut visitor);
 
+        let log_fields = visitor.0;
         let log_event = LogEvent {
             application: self.application.to_owned(),
             environment: self.environment.to_owned(),
@@ -104,8 +106,11 @@ impl<S: Subscriber> Layer<S> for AxiomLoggingLayer {
             target: event.metadata().target().to_string(),
             name: event.metadata().name().to_string(),
             message: log_fields.message.unwrap_or_default(),
-            fields: log_fields.fields,
+            fields: serde_json::to_value(log_fields.fields)
+                .expect("cannot serde a hashmap, it's a bug"),
         };
+
+        dbg!(&log_event);
 
         if let Err(e) = self.tx.send(log_event) {
             tracing::error!(err=%e, "fail to send log event to given channel");
@@ -113,20 +118,49 @@ impl<S: Subscriber> Layer<S> for AxiomLoggingLayer {
     }
 }
 
-pub struct JsonVisitor<'a>(&'a mut LogFields);
+pub struct JsonVisitor<'a>(LogFields<'a>);
 
 impl<'a> tracing::field::Visit for JsonVisitor<'a> {
+    fn record_f64(&mut self, field: &Field, value: f64) {
+        self.0.fields.insert(field.name(), Value::from(value));
+    }
+
+    /// Visit a signed 64-bit integer value.
+    fn record_i64(&mut self, field: &Field, value: i64) {
+        self.0.fields.insert(field.name(), Value::from(value));
+    }
+
+    /// Visit an unsigned 64-bit integer value.
+    fn record_u64(&mut self, field: &Field, value: u64) {
+        self.0.fields.insert(field.name(), Value::from(value));
+    }
+
+    /// Visit a boolean value.
+    fn record_bool(&mut self, field: &Field, value: bool) {
+        self.0.fields.insert(field.name(), Value::from(value));
+    }
+
+    /// Visit a string value.
+    fn record_str(&mut self, field: &Field, value: &str) {
+        self.0.fields.insert(field.name(), Value::from(value));
+    }
+
     fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
         let field_name = field.name();
-        if field_name.eq("message") {
-            let mut msg = format!("{:?}", value);
-            Self::trim_string_char(&mut msg);
-            self.0.message = Some(msg);
-        }
-        if let Some(container) = self.0.fields.as_object_mut() {
-            let mut string = format!("{:?}", value);
-            Self::trim_string_char(&mut string);
-            container.insert(field_name.to_string(), Value::String(string));
+
+        match field_name {
+            n if n.starts_with("log.") => {}
+            n if n.starts_with("r#") => {
+                self.0
+                    .fields
+                    .insert(&n[2..], serde_json::Value::from(format!("{:?}", value)));
+            }
+
+            n => {
+                self.0
+                    .fields
+                    .insert(n, serde_json::Value::from(format!("{:?}", value)));
+            }
         }
     }
 }
@@ -142,9 +176,9 @@ impl<'a> JsonVisitor<'a> {
     }
 }
 
-pub struct LogFields {
+pub struct LogFields<'a> {
     message: Option<String>,
-    fields: Value,
+    fields: HashMap<&'a str, serde_json::Value>,
 }
 
 #[derive(serde::Serialize, Debug)]
