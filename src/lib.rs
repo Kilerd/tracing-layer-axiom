@@ -89,23 +89,19 @@ impl<S: Subscriber> Layer<S> for AxiomLoggingLayer {
         event: &tracing::Event<'_>,
         _ctx: tracing_subscriber::layer::Context<'_, S>,
     ) {
-        let mut log_fields = LogFields {
-            message: None,
-            fields: HashMap::default(),
-        };
-
-        let mut visitor = JsonVisitor(log_fields);
+        let mut visitor = JsonVisitor::default();
         event.record(&mut visitor);
 
-        let log_fields = visitor.0;
         let log_event = LogEvent {
             application: self.application.to_owned(),
             environment: self.environment.to_owned(),
             level: event.metadata().level().to_string(),
-            target: event.metadata().target().to_string(),
-            name: event.metadata().name().to_string(),
-            message: log_fields.message.unwrap_or_default(),
-            fields: serde_json::to_value(log_fields.fields)
+            target: visitor
+                .log_target
+                .map(|it| it.to_owned())
+                .unwrap_or_else(|| event.metadata().target().to_string()),
+            message: visitor.message.unwrap_or_default(),
+            fields: serde_json::to_value(visitor.fields)
                 .expect("cannot serde a hashmap, it's a bug"),
         };
 
@@ -117,67 +113,67 @@ impl<S: Subscriber> Layer<S> for AxiomLoggingLayer {
     }
 }
 
-pub struct JsonVisitor<'a>(LogFields<'a>);
+#[derive(Default)]
+pub struct JsonVisitor<'a> {
+    log_target: Option<String>,
+    message: Option<String>,
+    fields: HashMap<&'a str, serde_json::Value>,
+}
 
 impl<'a> tracing::field::Visit for JsonVisitor<'a> {
     fn record_f64(&mut self, field: &Field, value: f64) {
-        self.0.fields.insert(field.name(), Value::from(value));
+        self.record_value(field.name(), Value::from(value));
     }
 
     /// Visit a signed 64-bit integer value.
     fn record_i64(&mut self, field: &Field, value: i64) {
-        self.0.fields.insert(field.name(), Value::from(value));
+        self.record_value(field.name(), Value::from(value));
     }
 
     /// Visit an unsigned 64-bit integer value.
     fn record_u64(&mut self, field: &Field, value: u64) {
-        self.0.fields.insert(field.name(), Value::from(value));
+        self.record_value(field.name(), Value::from(value));
     }
 
     /// Visit a boolean value.
     fn record_bool(&mut self, field: &Field, value: bool) {
-        self.0.fields.insert(field.name(), Value::from(value));
+        self.record_value(field.name(), Value::from(value));
     }
 
     /// Visit a string value.
     fn record_str(&mut self, field: &Field, value: &str) {
-        self.0.fields.insert(field.name(), Value::from(value));
+        let field_name = field.name();
+        match field_name {
+            "log.target" => {
+                self.log_target = Some(value.to_owned());
+            }
+            "message" => {
+                self.message = Some(value.to_owned());
+            }
+            n if n.starts_with("log.") => {}
+            n => {
+                self.record_value(n, Value::from(value));
+            }
+        }
     }
 
     fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
-        let field_name = field.name();
-
-        match field_name {
-            n if n.starts_with("log.") => {}
-            n if n.starts_with("r#") => {
-                self.0
-                    .fields
-                    .insert(&n[2..], serde_json::Value::from(format!("{:?}", value)));
-            }
-
-            n => {
-                self.0
-                    .fields
-                    .insert(n, serde_json::Value::from(format!("{:?}", value)));
-            }
-        }
+        self.record_value(
+            field.name(),
+            serde_json::Value::from(format!("{:?}", value)),
+        );
     }
 }
 
 impl<'a> JsonVisitor<'a> {
-    fn trim_string_char(string: &mut String) {
-        if string.starts_with('"') {
-            *string = (&string[1..string.len()]).to_owned();
-        }
-        if string.ends_with('"') {
-            *string = (&string[0..string.len() - 1]).to_owned();
-        }
+    fn record_value(&mut self, name: &'a str, value: Value) {
+        let name = if name.starts_with("r#") {
+            &name[2..]
+        } else {
+            name
+        };
+        self.fields.insert(name, value);
     }
-}
-
-pub struct LogFields<'a> {
-    message: Option<String>,
-    fields: HashMap<&'a str, serde_json::Value>,
 }
 
 #[derive(serde::Serialize, Debug)]
@@ -186,7 +182,6 @@ pub struct LogEvent {
     environment: String,
     level: String,
     target: String,
-    name: String,
     message: String,
     fields: Value,
 }
