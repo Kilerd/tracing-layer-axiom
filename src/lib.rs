@@ -3,6 +3,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use axiom_rs::Client;
+use chrono::Utc;
 use serde_json::Value;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tracing::field::Field;
@@ -50,19 +51,12 @@ pub(crate) async fn axiom_backend_worker(
     client: Arc<Client>,
     dataset: String,
 ) {
-    while let Some(message) = rx.recv().await {
-        // let client = self.client.clone();
-        // let dataset = self.dataset.clone();
-        //
+    let mut buf = Vec::with_capacity(10);
+
+    while rx.recv_many(&mut buf, 10).await > 0 {
         let mut retries = 0;
         while retries < MAX_RETRIES {
-            let res = client
-                .ingest(
-                    dataset.clone(),
-                    vec![serde_json::to_value(&message)
-                        .expect("the log event should be serded, it must be a bug")],
-                )
-                .await;
+            let res = client.ingest(dataset.clone(), &buf).await;
             if let Err(e) = res {
                 retries += 1;
                 println!("fail to send logs to axiom: {}", e);
@@ -70,6 +64,8 @@ pub(crate) async fn axiom_backend_worker(
                 break;
             }
         }
+
+        buf.clear();
     }
 }
 #[derive(Debug)]
@@ -92,6 +88,7 @@ where
         event.record(&mut visitor);
 
         let log_event = LogEvent {
+            _time: Utc::now().timestamp_millis(),
             application: self.application.to_owned(),
             environment: self.environment.to_owned(),
             level: event.metadata().level().to_string(),
@@ -180,6 +177,7 @@ impl<'a> JsonVisitor<'a> {
 
 #[derive(serde::Serialize, Debug)]
 pub struct LogEvent {
+    _time: i64,
     application: String,
     environment: String,
     level: String,
